@@ -651,6 +651,16 @@ def admin_dashboard():
         f"<tr><td>{escape(row['created_at'])}</td><td>{escape(row['event'])}</td><td>{escape(row['detail'] or '')}</td></tr>"
         for row in database.recent_audit_log(50)
     )
+    voter_rows = "".join(
+        f"<tr><td>{escape(row['name'] or '')}</td>"
+        f"<td>{escape(format_registration_number(row['registration_number']))}</td>"
+        f"<td>{escape(row['voter_number'] or '')}</td>"
+        f"<td>{'Yes' if row['has_voted'] else 'No'}</td>"
+        f"<td>{escape(row['created_at'] or '')}</td></tr>"
+        for row in database.list_voters_for_admin()
+    )
+    if not voter_rows:
+        voter_rows = '<tr><td colspan="5" class="muted">No voters registered yet.</td></tr>'
 
     return page("Admin Dashboard", f"""
     <div class="card"><h2>Election Control</h2>
@@ -671,6 +681,10 @@ def admin_dashboard():
     <label>Candidate name</label><input type="text" name="candidate_name" maxlength="100">
     <label>Symbol picture (PNG, JPG, or WEBP)</label><input type="file" name="symbol_image" accept="image/png,image/jpeg,image/webp" required>
     <button class="btn" type="submit">Add Party</button></form></div>
+
+    <div class="card"><h2>Registered Voters ({database.count_voters()})</h2>
+    <p class="muted">This list includes personal voter details. Face templates are not displayed.</p>
+    <div style="overflow-x:auto"><table><tr><th>Name</th><th>Registration Number</th><th>Voter Card Number</th><th>Voted</th><th>Registered (UTC)</th></tr>{voter_rows}</table></div></div>
 
     <div class="card"><h2>Recent Audit Log</h2><table><tr><th>Time (UTC)</th><th>Event</th><th>Detail</th></tr>{log_rows}</table></div>
     """)

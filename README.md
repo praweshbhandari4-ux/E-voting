@@ -11,7 +11,7 @@ A small Flask web application for demonstrating a voter registration and voting 
 - A random 12-digit simulation registration number is issued. The voter uses it to start the vote flow, then verifies their face again.
 - The voter selects a party/candidate and confirms the choice.
 - A ballot is recorded without a voter ID on the ballot row. The voter record is marked as having voted in the same database transaction.
-- An admin can close/open the simulation, manage parties, see totals and recent audit events, and inspect the ballot-chain integrity check.
+- An admin can close/open the simulation, manage parties, review registered-voter details and voting status, see totals and recent audit events, and inspect the ballot-chain integrity check.
 
 The app seeds six demo parties and symbols on first startup. The `/results` page hides tallies unless `EVOTING_SHOW_RESULTS=1` is set.
 
@@ -114,6 +114,7 @@ Open [http://localhost:10000](http://localhost:10000). The database is `/app/evo
 
 - `/admin/login`: password-protected admin sign-in.
 - `/admin`: election open/closed state, vote count, ledger check, party management, and recent audit log.
+- The admin dashboard's **Registered Voters** table shows each display name, generated registration number, scanned voter-card number, whether the account has voted, and registration time. Access is restricted to an authenticated admin; biometric templates are not shown.
 - A party with recorded votes cannot be removed.
 - `EVOTING_ADMIN_PASSWORD`: admin password used on initialization. The stored value is a Werkzeug password hash.
 - `EVOTING_SECRET_KEY`: stable secret used to sign Flask session cookies. Keep it secret; changing it logs out existing sessions.

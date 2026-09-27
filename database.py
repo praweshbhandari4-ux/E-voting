@@ -192,6 +192,17 @@ def count_voters():
     with _connect() as conn:
         return conn.execute("SELECT COUNT(*) AS count FROM voters").fetchone()["count"]
 
+
+def list_voters_for_admin():
+    """Return voter details needed by the admin list, excluding biometric templates."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT name, registration_number, voter_number, has_voted, created_at "
+            "FROM voters ORDER BY id DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def find_duplicate_face(sface_template):
     with _connect() as conn:
         rows = conn.execute("SELECT id, sface_template FROM voters").fetchall()
