@@ -135,6 +135,10 @@ def initialize_admin_password():
 
 
 app = Flask(__name__, static_folder=STATIC_DIR)
+trusted_hosts = ["127.0.0.1", "localhost"]
+render_hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+if render_hostname:
+    trusted_hosts.append(render_hostname)
 app.config.update(
     SECRET_KEY=base64.urlsafe_b64encode(SESSION_KEY).decode("ascii"),
     MAX_CONTENT_LENGTH=10 * 1024 * 1024,
@@ -143,7 +147,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_NAME="evoting_session",
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=10),
-    TRUSTED_HOSTS=["127.0.0.1", "localhost"],
+    TRUSTED_HOSTS=trusted_hosts,
 )
 
 RATE_BUCKETS = defaultdict(deque)
@@ -734,7 +738,9 @@ def admin_delete_party():
 
 @app.errorhandler(400)
 def bad_request(_error):
-    return page("Bad Request", '<div class="card"><h2>Bad request</h2><p>The form was invalid or expired.</p></div>'), 400
+    # A rejected Host header can fail before Flask builds a URL adapter, so
+    # this handler must not call page(), which uses url_for().
+    return "Bad request", 400
 
 
 @app.errorhandler(413)
