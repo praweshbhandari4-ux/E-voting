@@ -1,0 +1,9 @@
+.session_key
+evoting.db
+evoting.db-shm
+evoting.db-wal
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store

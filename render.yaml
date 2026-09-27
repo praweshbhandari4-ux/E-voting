@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: nepal-evoting-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: EVOTING_ADMIN_PASSWORD
+        sync: false
+      - key: EVOTING_SECRET_KEY
+        sync: false
