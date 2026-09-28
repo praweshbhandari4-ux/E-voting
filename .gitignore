@@ -10,3 +10,4 @@ ocr_results/
 __pycache__/
 .DS_Store
 __MACOSX/
+/models/*.onnx
