@@ -28,6 +28,7 @@ these functions changed, from fake to real.
 
 import base64
 import io
+import os
 
 import cv2
 import numpy as np
@@ -42,7 +43,13 @@ LBP_GRID = (8, 8)
 # test photos before you report FAR/FRR numbers in the paper. Report whatever
 # threshold you actually used and how you chose it (e.g. the value that
 # equalized FAR and FRR on your dataset -- the standard EER approach).
-SFACE_MATCH_THRESHOLD = 0.08
+# Keep the thresholds configurable through the names documented by app.py.
+# This engine currently produces LBP histogram similarities (not SFace cosine
+# scores), so the defaults remain calibrated for the LBP implementation.
+SFACE_MATCH_THRESHOLD = float(os.environ.get("EVOTING_FACE_THRESHOLD", "0.08"))
+DUPLICATE_FACE_THRESHOLD = float(
+    os.environ.get("EVOTING_DUPLICATE_THRESHOLD", str(SFACE_MATCH_THRESHOLD))
+)
 
 _CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 _FACE_CASCADE = cv2.CascadeClassifier(_CASCADE_PATH)
@@ -54,6 +61,10 @@ class FaceError(RuntimeError):
 
 class FaceModelsMissing(FaceError):
     pass
+
+
+class LegacyTemplate(FaceError):
+    """Stored template was created by an incompatible face-engine version."""
 
 
 class LowQualityImage(FaceError):
@@ -72,6 +83,18 @@ def ensure_models(download=True):
     if _FACE_CASCADE.empty():
         raise FaceModelsMissing("Haar cascade face detector failed to load")
     return True
+
+
+_ENGINE = None
+
+
+def get_engine():
+    """Return the shared, lightweight Haar/LBP face engine."""
+    global _ENGINE
+    if _ENGINE is None:
+        ensure_models()
+        _ENGINE = FaceEngine()
+    return _ENGINE
 
 
 def decode_camera_image(value):

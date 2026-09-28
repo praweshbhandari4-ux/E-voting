@@ -1,9 +1,12 @@
-.session_key
+# never publish voter data, secrets or captured images
 evoting.db
-evoting.db-shm
-evoting.db-wal
+evoting.db-*
+.session_key
+*.jpg
+*.jpeg
+!static/**/*.jpg
+evaluation_results/
+ocr_results/
 __pycache__/
-*.py[cod]
-.venv/
-venv/
 .DS_Store
+__MACOSX/

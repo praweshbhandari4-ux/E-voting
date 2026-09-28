@@ -11,37 +11,52 @@
     return prompts.split('|').filter(Boolean);
   }
 
-  function getStreamState(box) {
-    return box.__cameraState || { stream: null, promptIndex: 0, started: false };
-  }
-
-  function updateButtonState(box, isReady) {
-    const captureButton = box.querySelector('[data-capture-frame]');
-    if (captureButton) {
-      captureButton.disabled = !isReady;
-    }
-  }
-
   function attachToBox(box) {
     const video = box.querySelector('video');
     const canvas = box.querySelector('canvas');
-    const preview = box.querySelector('[data-camera-preview]');
+    const thumbs = box.querySelector('[data-camera-thumbs]');
     const startButton = box.querySelector('[data-start-camera]');
     const captureButton = box.querySelector('[data-capture-frame]');
+    const retakeButton = box.querySelector('[data-retake]');
     const hiddenFields = Array.from(box.querySelectorAll('[data-camera-field]'));
     const prompts = readPromptText(box);
+    const maxSide = parseInt(box.dataset.maxSide || '960', 10);
+    const quality = parseFloat(box.dataset.quality || '0.85');
+    const form = box.closest('form');
 
     if (!video || !canvas || !startButton || !captureButton || hiddenFields.length === 0) {
       return;
     }
 
-    const state = getStreamState(box);
-    box.__cameraState = state;
+    const state = { stream: null, index: 0, started: false };
 
-    function renderPreview(dataUrl) {
-      if (preview) {
-        preview.src = dataUrl;
-        preview.hidden = false;
+    function promptFor(index) {
+      return prompts[index] || 'Capture the next photo';
+    }
+
+    function renderThumbs() {
+      if (!thumbs) return;
+      thumbs.textContent = '';
+      hiddenFields.forEach(function (field) {
+        if (!field.value) return;
+        const img = document.createElement('img');
+        img.src = field.value;
+        img.alt = 'Captured photo';
+        thumbs.appendChild(img);
+      });
+    }
+
+    function refreshControls() {
+      const done = state.index >= hiddenFields.length;
+      captureButton.disabled = !state.started || done;
+      if (retakeButton) retakeButton.hidden = state.index === 0;
+      if (!state.started) return;
+      if (done) {
+        setStatus(box, hiddenFields.length > 1
+          ? 'All photos captured. Check them below, then submit (or Retake).'
+          : 'Photo captured. Check it below, then submit (or Retake).');
+      } else {
+        setStatus(box, promptFor(state.index));
       }
     }
 
@@ -50,72 +65,54 @@
         setStatus(box, 'Camera is not ready yet. Please open the camera again.');
         return;
       }
+      const sourceWidth = video.videoWidth;
+      const sourceHeight = video.videoHeight;
+      const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+      canvas.width = Math.round(sourceWidth * scale);
+      canvas.height = Math.round(sourceHeight * scale);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      hiddenFields[state.index].value = canvas.toDataURL('image/jpeg', quality);
+      state.index += 1;
+      renderThumbs();
+      refreshControls();
+    }
 
-      // Some cameras report 4K+ dimensions. Keep captured form fields small
-      // enough that three face samples fit comfortably under Flask's request
-      // limit while retaining enough detail for face detection and OCR.
-      const sourceWidth = video.videoWidth || 640;
-      const sourceHeight = video.videoHeight || 480;
-      const scale = Math.min(1, 1280 / Math.max(sourceWidth, sourceHeight));
-      const width = Math.round(sourceWidth * scale);
-      const height = Math.round(sourceHeight * scale);
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-      context.drawImage(video, 0, 0, width, height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-      const field = hiddenFields[state.promptIndex % hiddenFields.length];
-      if (field) {
-        field.value = dataUrl;
-      }
-
-      renderPreview(dataUrl);
-
-      const prompt = prompts[state.promptIndex] || 'Capture the next pose';
-      const nextIndex = state.promptIndex + 1;
-      state.promptIndex = nextIndex;
-
-      if (hiddenFields.length > 1 && nextIndex < hiddenFields.length) {
-        setStatus(box, `Next: ${prompt}`);
-      } else {
-        setStatus(box, 'All captures completed. Review the preview and submit the form.');
-      }
-
-      if (state.promptIndex >= hiddenFields.length) {
-        captureButton.disabled = true;
-      }
+    function retake() {
+      hiddenFields.forEach(function (field) { field.value = ''; });
+      state.index = 0;
+      renderThumbs();
+      refreshControls();
     }
 
     startButton.addEventListener('click', async function () {
       if (state.started && state.stream) {
-        setStatus(box, 'Camera already active.');
+        setStatus(box, 'Camera already active. ' + promptFor(state.index));
         return;
       }
-
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus(box, 'This browser blocks the camera on this address. Open the site over HTTPS (or on localhost).');
+        return;
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
-
         state.stream = stream;
         video.srcObject = stream;
         await video.play();
         if (video.readyState < 2) {
-          await new Promise((resolve) => video.addEventListener('loadeddata', resolve, { once: true }));
+          await new Promise(function (resolve) { video.addEventListener('loadeddata', resolve, { once: true }); });
         }
         state.started = true;
-        setStatus(box, prompts[0] || 'Camera ready. Capture the first frame.');
-        updateButtonState(box, true);
+        refreshControls();
       } catch (error) {
         console.error('Camera access error', error);
-        if (state.stream) {
-          state.stream.getTracks().forEach((track) => track.stop());
-        }
+        if (state.stream) state.stream.getTracks().forEach(function (track) { track.stop(); });
         state.stream = null;
         state.started = false;
         setStatus(box, 'Camera permission was denied or no camera is available.');
-        updateButtonState(box, false);
+        refreshControls();
       }
     });
 
@@ -127,9 +124,28 @@
       captureCurrentFrame();
     });
 
-    box.__captureCurrentFrame = captureCurrentFrame;
-    updateButtonState(box, false);
-    setStatus(box, 'Open the camera, keep one face visible, and follow each capture instruction.');
+    if (retakeButton) retakeButton.addEventListener('click', retake);
+
+    if (form) {
+      form.addEventListener('submit', function (event) {
+        const fileInput = form.querySelector('input[type=file]');
+        const hasFile = fileInput && fileInput.files && fileInput.files.length > 0;
+        const missing = hiddenFields.filter(function (field) { return !field.value; }).length;
+        if (hasFile) return;
+        if (missing > 0) {
+          event.preventDefault();
+          setStatus(box, missing === hiddenFields.length
+            ? 'Please open the camera and capture ' + (hiddenFields.length > 1 ? 'all ' + hiddenFields.length + ' photos' : 'a photo') + ' first.'
+            : 'Please capture the remaining ' + missing + ' photo(s) first. ' + promptFor(state.index));
+          box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+        if (state.stream) state.stream.getTracks().forEach(function (track) { track.stop(); });
+      });
+    }
+
+    refreshControls();
+    setStatus(box, 'Press "Open Camera" and allow camera access. ' + promptFor(0));
   }
 
   boxes.forEach(attachToBox);

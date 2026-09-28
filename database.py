@@ -6,6 +6,8 @@ import secrets
 import sqlite3
 import time
 
+import numpy as np
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "evoting.db")
 
 GENESIS_HASH = "0" * 64
@@ -24,7 +26,7 @@ class ElectionClosed(RuntimeError):
 
 
 def _connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
@@ -40,18 +42,10 @@ def _normalize_template(value):
     return list(value)
 
 
-def _template_distance(a, b):
-    a_list = _normalize_template(a)
-    b_list = _normalize_template(b)
-    if not a_list and not b_list:
-        return 0.0
-    if len(a_list) != len(b_list):
-        return float("inf")
-    if not a_list:
-        return float("inf")
-    difference = sum(abs(x - y) for x, y in zip(a_list, b_list))
-    max_term = max(1.0, sum(abs(x) for x in a_list), sum(abs(y) for y in b_list))
-    return difference / max_term
+def _unit(value):
+    vector = np.asarray(_normalize_template(value), dtype=np.float64).ravel()
+    norm = np.linalg.norm(vector)
+    return vector / norm if norm else vector
 
 
 def init_db():
@@ -192,24 +186,28 @@ def count_voters():
     with _connect() as conn:
         return conn.execute("SELECT COUNT(*) AS count FROM voters").fetchone()["count"]
 
+def find_duplicate_face(sface_template, threshold):
+    """Returns (voter_id, similarity) of the most similar already-registered
+    voter if their cosine similarity is >= threshold, else (None, best_score).
 
-def list_voters_for_admin():
-    """Return voter details needed by the admin list, excluding biometric templates."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT name, registration_number, voter_number, has_voted, created_at "
-            "FROM voters ORDER BY id DESC"
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def find_duplicate_face(sface_template):
+    The previous version compared LBP histograms with a normalised L1
+    distance < 0.02, which two different photos of the same person never
+    reach -- so it never flagged anyone (measured: 0 of 11 same-person pairs).
+    Templates from the old engine (not 128-d) are skipped."""
+    target = _unit(sface_template)
     with _connect() as conn:
         rows = conn.execute("SELECT id, sface_template FROM voters").fetchall()
+    best_id, best_score = None, -1.0
     for row in rows:
-        if _template_distance(row["sface_template"], sface_template) < 0.02:
-            return row["id"]
-    return None
+        stored = _unit(row["sface_template"])
+        if stored.shape != target.shape:
+            continue  # legacy LBP template
+        score = float(np.dot(stored, target))
+        if score > best_score:
+            best_id, best_score = row["id"], score
+    if best_id is not None and best_score >= threshold:
+        return best_id, best_score
+    return None, best_score
 
 
 def hash_national_id(national_id_text):
@@ -222,27 +220,45 @@ def hash_national_id(national_id_text):
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def create_voter(name, sface_template, lbp_template, voter_number=None):
+def national_id_registered(national_id_hash):
+    with _connect() as conn:
+        if conn.execute("SELECT 1 FROM voters WHERE national_id_hash = ?", (national_id_hash,)).fetchone():
+            return True
+        # rows written by the previous version stored the raw number instead
+        for row in conn.execute("SELECT voter_number FROM voters WHERE voter_number IS NOT NULL"):
+            if hash_national_id(row["voter_number"]) == national_id_hash:
+                return True
+    return False
+
+
+def create_voter(name, sface_template, lbp_template, national_id_hash=None):
+    """Only the SHA-256 hash of the card number is stored (national_id_hash);
+    the raw number is never written to the database."""
     if not is_election_open():
         raise ElectionClosed("registration is closed")
+    name = (name or "").strip()[:100]
+    if not name:
+        raise ValueError("a display name is required")
     target = _normalize_template(sface_template)
     with _connect() as conn:
-        if voter_number:
-            existing_id = conn.execute(
-                "SELECT id FROM voters WHERE voter_number = ?", (voter_number,)
-            ).fetchone()
-            if existing_id:
-                raise DuplicateNationalId("this voter number has already been registered")
+        conn.execute("BEGIN IMMEDIATE")
+        if national_id_hash and national_id_registered(national_id_hash):
+            conn.rollback()
+            raise DuplicateNationalId("this voter number has already been registered")
         existing = {row["registration_number"] for row in conn.execute("SELECT registration_number FROM voters").fetchall()}
         while True:
             reg_number = random.SystemRandom().randrange(10**11, 10**12)
             if reg_number not in existing:
                 break
-        conn.execute(
-            "INSERT INTO voters (name, registration_number, voter_number, sface_template, lbp_template) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, reg_number, voter_number, json.dumps(target), json.dumps(_normalize_template(lbp_template))),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO voters (name, registration_number, national_id_hash, sface_template, lbp_template) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, reg_number, national_id_hash, json.dumps(target), json.dumps(_normalize_template(lbp_template))),
+            )
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            raise DuplicateNationalId("this voter number has already been registered") from exc
         conn.commit()
         return reg_number
 
@@ -312,11 +328,22 @@ def cast_vote(voter_id, party_id):
     if not is_election_open():
         raise ElectionClosed("voting is closed")
     with _connect() as conn:
-        row = conn.execute("SELECT has_voted FROM voters WHERE id = ?", (int(voter_id),)).fetchone()
-        if row is None:
-            raise ValueError("voter not found")
-        if row["has_voted"]:
+        # BEGIN IMMEDIATE takes the write lock up-front, so two simultaneous
+        # submissions cannot both pass the has_voted check (double vote) or
+        # both read the same prev_hash (forked ledger).
+        conn.execute("BEGIN IMMEDIATE")
+        claimed = conn.execute(
+            "UPDATE voters SET has_voted = 1 WHERE id = ? AND has_voted = 0", (int(voter_id),)
+        ).rowcount
+        if claimed != 1:
+            exists = conn.execute("SELECT 1 FROM voters WHERE id = ?", (int(voter_id),)).fetchone()
+            conn.rollback()
+            if not exists:
+                raise ValueError("voter not found")
             raise AlreadyVoted("This voter has already voted")
+        if not conn.execute("SELECT 1 FROM parties WHERE id = ?", (int(party_id),)).fetchone():
+            conn.rollback()
+            raise ValueError("party not found")
 
         prev_hash = get_last_hash(conn)
         nonce = secrets.token_hex(16)
@@ -327,10 +354,9 @@ def cast_vote(voter_id, party_id):
             "INSERT INTO ballots (party_id, nonce, timestamp, prev_hash, hash) VALUES (?, ?, ?, ?, ?)",
             (int(party_id), nonce, timestamp, prev_hash, ballot_hash),
         )
-        # has_voted is updated in the SAME transaction as the anonymous ballot
+        # has_voted was set in the SAME transaction as the anonymous ballot
         # insert, but the ballot row itself carries no reference to voter_id --
         # the link is dropped at the instant the vote is committed.
-        conn.execute("UPDATE voters SET has_voted = 1 WHERE id = ?", (int(voter_id),))
         conn.commit()
         return cursor.lastrowid
 
@@ -377,6 +403,18 @@ def log_event(event, detail=None):
             (event, detail),
         )
         conn.commit()
+
+
+def all_audit_log():
+    with _connect() as conn:
+        rows = conn.execute("SELECT id, event, detail, created_at FROM audit_log ORDER BY id ASC").fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_legacy_voters(expected_dim=128):
+    with _connect() as conn:
+        rows = conn.execute("SELECT sface_template FROM voters").fetchall()
+    return sum(1 for row in rows if len(_normalize_template(row["sface_template"])) != expected_dim)
 
 
 def recent_audit_log(limit=200):

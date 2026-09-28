@@ -1,12 +1,22 @@
 Flask>=3.1,<4
-opencv-contrib-python>=4.10,<5
+# Needs FaceDetectorYN + FaceRecognizerSF (OpenCV >= 4.8). Install ONLY this
+# OpenCV package -- if opencv-python or opencv-python-headless is also
+# installed, uninstall them first (they shadow each other):
+#   pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python
+#   pip install opencv-contrib-python
+opencv-contrib-python>=4.8,<5
 numpy>=1.24,<3
 Pillow>=10,<13
+certifi>=2024.2.2
 waitress>=3,<4
 pytesseract>=0.3,<1
+# optional, only for evaluate_accuracy.py's ROC plot
+# matplotlib>=3.7
 
-# System dependency (not a pip package): the Tesseract OCR binary must also
-# be installed for ocr.py to work.
-#   Ubuntu/Debian: sudo apt install tesseract-ocr
-#   macOS (Homebrew): brew install tesseract
-#   Windows: install from https://github.com/UB-Mannheim/tesseract/wiki
+# System dependency (not a pip package): the Tesseract OCR binary WITH the
+# Nepali language data -- without "nep", Devanagari digits (०-९) on voter
+# cards cannot be read at all.
+#   macOS (Homebrew):  brew install tesseract tesseract-lang
+#   Ubuntu/Debian:     sudo apt install tesseract-ocr tesseract-ocr-nep
+#   Windows:           UB-Mannheim installer, tick "Nepali" under additional languages
+# Check with:  tesseract --list-langs   (must list "nep")
