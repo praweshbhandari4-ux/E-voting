@@ -16,5 +16,9 @@ COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
+# Fetch and checksum the face models while building the image, not when the
+# web process starts. This keeps Render's startup independent of network access.
+RUN python -c "from face_engine import ensure_models; ensure_models(download=True)"
+
 EXPOSE 10000
 CMD ["python", "render_start.py"]

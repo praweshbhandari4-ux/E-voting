@@ -1,10 +1,8 @@
 .git
-.gitignore
-.session_key
-evoting.db
-evoting.db-shm
-evoting.db-wal
-__pycache__
-*.py[cod]
 .venv
 venv
+__pycache__
+*.py[cod]
+evoting.db*
+.session_key
+models/*.onnx

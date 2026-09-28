@@ -20,7 +20,7 @@ Tesseract **with Nepali**. Without it, Devanagari digits can't be read:
 
 Check: `tesseract --list-langs` must list `nep`.
 
-The face models are in `models/` (YuNet 230 KB, SFace 37 MB). They are checked against their SHA-256 on every start. If they are missing, `python app.py setup` downloads them.
+The face models are stored in `models/` (YuNet 230 KB, SFace 37 MB), checked against their SHA-256, and downloaded by `python app.py setup` when missing. Docker builds download and verify them while building the image, so the deployed web process does not need network access at startup. The model files are excluded from Git and the Docker build context.
 
 ## 2. Run locally
 
@@ -47,6 +47,10 @@ python app.py serve
 ```
 
 If `EVOTING_TRUSTED_HOSTS` doesn't match your domain, every request gets "Bad request: this host name is not in EVOTING_TRUSTED_HOSTS".
+
+### Render
+
+This repository includes `render.yaml` and a Dockerfile. In Render, create the web service from the repository using the Blueprint, then set `EVOTING_ADMIN_PASSWORD` and `EVOTING_SECRET_KEY` in the service environment. Docker downloads and verifies the face models during the image build. If a deployment previously failed with `missing model file`, push this Dockerfile change and trigger a new deploy so Render rebuilds the image.
 
 ## 4. Instructions to give volunteers
 
